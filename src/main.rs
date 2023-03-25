@@ -11,7 +11,7 @@ fn main() {
         title: "Bevy Test Program".into(),
         resolution: (800.0,600.0).into(),
         present_mode: PresentMode::AutoVsync,
-        // resizable: false,
+        resizable: false,
         ..default()
       }),
       ..default()

@@ -22,19 +22,20 @@ impl Plugin for HexagonPlugin {
     // imports app from main
     app.add_plugin(FrameTimeDiagnosticsPlugin)
       .insert_resource(MsTimer(Timer::from_seconds(0.01, TimerMode::Repeating))) // roughly 60 fps locked
-      .insert_resource(SpawnTimer(Timer::from_seconds(1.0, TimerMode::Repeating))) 
+      .insert_resource(SpawnTimer(Timer::from_seconds(1.5, TimerMode::Repeating))) 
       .add_startup_system(setup)
       .add_startup_system(create_bg)
       .add_system(spawn_walls)
       .add_system(print_fps)
       .add_system(rotate_camera)
       .add_system(move_walls)
+      .add_system(collision_detection)
       .add_system(player_control);
   }
 }
 
 // ---- CONSTANTS ----
-const SPEED:f32 = 2.0;
+const SPEED:f32 = 4.0;
 const OFFSET_RADIUS:f32 = 60.0;
 const DEG_TO_RAD:f32 = std::f32::consts::PI / 180.0;
 
@@ -49,16 +50,19 @@ struct MsTimer(Timer);
 #[derive(Component)]
 struct FpsText;
 
-#[derive(Component)]
+#[derive(Component, Debug)]
 struct Player {
   angle: f32
 }
 
 #[derive(Component, Debug)]
 struct Wall {
-  distance: f32, // distance from center (45..450)
+  distance: f32, // distance from center (30..450)
   direction: i32 // 0..5
 }
+
+#[derive(Component)]
+struct Pause(bool);
 
 // ---- SYSTEMS ----
 fn setup(
@@ -120,6 +124,9 @@ fn setup(
     }, 
     Player { angle:0.0 }
   ));
+
+  // spawn pause component
+  commands.spawn(Pause(false));
 
 }
 
@@ -193,10 +200,16 @@ fn player_control(
   time: Res<Time>, 
   mut timer: ResMut<MsTimer>,
   keyboard_input: Res<Input<KeyCode>>,
-  mut query: Query<(&mut Transform, &mut Player), With<Player>>
+  mut query: Query<(&mut Transform, &mut Player), With<Player>>,
+  pause_q: Query<&Pause>
 ) {
   let (mut player_transform, mut player) = query.single_mut();
   let mut direction = 0.0;
+
+  let is_paused = pause_q.get_single().unwrap();
+  if is_paused.0 {
+    return;
+  }
 
   // accept player input
   if keyboard_input.pressed(KeyCode::Left) {
@@ -234,11 +247,16 @@ fn player_control(
 fn rotate_camera(
   time: Res<Time>, 
   mut timer: ResMut<MsTimer>,
-  mut query: Query<&mut Transform, With<Camera>>
+  mut query: Query<&mut Transform, With<Camera>>,
+  pause_q: Query<&Pause>
 ) {
   if timer.0.tick(time.delta()).just_finished() {
     let mut camera_t = query.single_mut();
-    let rad_unit = 0.2 * SPEED * DEG_TO_RAD;
+    let is_paused = pause_q.get_single().unwrap();
+    let mut rad_unit = 0.2 * SPEED * DEG_TO_RAD;
+    if is_paused.0 {
+      rad_unit = 0.2 * DEG_TO_RAD;
+    }
     camera_t.rotate_z(rad_unit);
   }
 }
@@ -250,8 +268,14 @@ fn spawn_walls(
   mut commands: Commands,
   mut meshes: ResMut<Assets<Mesh>>,
   mut materials: ResMut<Assets<ColorMaterial>>,
+  pause_q: Query<&Pause>
 ) {
 
+  // prevent spawn on pause
+  let is_paused = pause_q.get_single().unwrap();
+  if is_paused.0 {
+    return;
+  }
   // prevent spawn on timer
   if !timer.0.tick(time.delta()).just_finished() {
     return;
@@ -270,7 +294,7 @@ fn spawn_walls(
     }
     directions.push(dir);
   }
-  println!("directions vec {:?}", directions);
+  // println!("directions vec {:?}", directions);
 
   // create walls
   for direction in directions {
@@ -313,7 +337,12 @@ fn move_walls(
   mut timer: ResMut<MsTimer>,
   mut query: Query<(Entity, &mut Transform, &mut Wall, &Mesh2dHandle)>,
   mut meshes: ResMut<Assets<Mesh>>,
+  pause_q: Query<&Pause>
 ) {
+  let is_paused = pause_q.get_single().unwrap();
+  if is_paused.0 {
+    return;
+  }
   // on tick timer
   if timer.0.tick(time.delta()).just_finished() {
     // get all walls
@@ -356,4 +385,43 @@ fn move_walls(
   }
 }
 
-// TODO: end state
+// detect collision between player and wall
+fn collision_detection(
+  time: Res<Time>, 
+  mut timer: ResMut<MsTimer>,
+  player_q: Query<&Player>,
+  walls_q: Query<&Wall>,
+  mut pause_q: Query<&mut Pause>
+) {
+
+  if !timer.0.tick(time.delta()).just_finished() {
+    return;
+  }
+
+  // get player transform
+  let player = player_q.get_single().unwrap();
+  let player_direction = match player.angle {
+    a if a < 60.0 => 0,
+    a if a < 120.0 => 1,
+    a if a < 180.0 => 2,
+    a if a < 240.0 => 3,
+    a if a < 300.0 => 4,
+    a if a < 360.0 => 5,
+    _ => {
+      println!("Impossible player angle? {:?}", player.angle);
+      99
+    }
+  };
+
+  for wall in &walls_q {
+    // find walls in same direction as player
+    // & wall distance < player offset
+    if wall.direction == player_direction && 
+      wall.distance < OFFSET_RADIUS &&
+      wall.distance > OFFSET_RADIUS - 10.0
+    {
+      let mut is_paused = pause_q.single_mut();
+      is_paused.0 = true;
+    }
+  }
+}
