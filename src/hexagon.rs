@@ -27,6 +27,7 @@ impl Plugin for HexagonPlugin {
       .add_startup_system(create_bg)
       .add_system(spawn_walls)
       .add_system(print_fps)
+      .add_system(update_score)
       .add_system(rotate_camera)
       .add_system(move_walls)
       .add_system(collision_detection)
@@ -64,6 +65,9 @@ struct Wall {
 #[derive(Component)]
 struct Pause(bool);
 
+#[derive(Component)]
+struct Score(i32, i32);
+
 // ---- SYSTEMS ----
 fn setup(
   mut commands: Commands,
@@ -77,7 +81,8 @@ fn setup(
   // spawn UI
   commands.spawn(NodeBundle {
     style: Style {
-      size: Size::new(Val::Percent(100.0), Val::Px(100.0)),
+      size: Size::new(Val::Percent(100.0), Val::Percent(100.0)),
+      flex_direction: FlexDirection::Column,
       padding: UiRect {
         top: Val::Px(5.0),
         left: Val::Px(5.0),
@@ -104,6 +109,36 @@ fn setup(
         color: Color::GREEN,
       }),
     ]), FpsText));
+
+    root.spawn(NodeBundle {
+      style: Style {
+        size: Size::new(Val::Percent(100.0), Val::Px(100.0)),
+        justify_content: JustifyContent::Center,
+        ..default()
+      },
+      // transform: ,
+      ..default()
+    }).with_children(|score_root| {
+      // spawn score
+      score_root.spawn((TextBundle::from_sections([
+        TextSection::new(
+          "Score: ",
+          TextStyle {
+            font: asset_server.load("fonts/Roboto-Medium.ttf"),
+            font_size: 30.0,
+            color: Color::WHITE,
+          }
+        ),
+        TextSection::new(
+          "00.00",
+          TextStyle {
+            font: asset_server.load("fonts/Roboto-Medium.ttf"),
+            font_size: 30.0,
+            color: Color::GREEN,
+          }
+        ),
+      ]), Score(0, 0)));
+    });
   });
 
   // spawns hexagon
@@ -425,4 +460,31 @@ fn collision_detection(
       is_paused.0 = true;
     }
   }
+}
+
+fn update_score(
+  time: Res<Time>, 
+  mut timer: ResMut<MsTimer>,
+  mut query:Query<(&mut Text, &mut Score)>,
+  pause_q: Query<&Pause>
+) {
+  let is_paused = pause_q.get_single().unwrap();
+  if is_paused.0 {
+    return;
+  }
+
+  if !timer.0.tick(time.delta()).just_finished() {
+    return;
+  }
+
+  let (mut text, mut score) = query.single_mut();
+  let new_score_1 = score.1 + 1;
+  if new_score_1 == 100 {
+    score.1 = 0;
+    score.0 = score.0 + 1;
+  } else {
+    score.1 = new_score_1;
+  }
+  // print score to UI
+  text.sections[1].value = "".to_owned() + &score.0.to_string() + "." + &score.1.to_string() + "s";
 }
