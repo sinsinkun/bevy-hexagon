@@ -401,12 +401,12 @@ fn collision_detection(
   // get player transform
   let player = player_q.get_single().unwrap();
   let player_direction = match player.angle {
-    a if a < 60.0 => 0,
-    a if a < 120.0 => 1,
-    a if a < 180.0 => 2,
-    a if a < 240.0 => 3,
-    a if a < 300.0 => 4,
-    a if a < 360.0 => 5,
+    a if a <= 60.0 => 0,
+    a if a <= 120.0 => 1,
+    a if a <= 180.0 => 2,
+    a if a <= 240.0 => 3,
+    a if a <= 300.0 => 4,
+    a if a <= 360.0 => 5,
     _ => {
       println!("Impossible player angle? {:?}", player.angle);
       99
@@ -416,8 +416,9 @@ fn collision_detection(
   for wall in &walls_q {
     // find walls in same direction as player
     // & wall distance < player offset
+    // TODO: better hit detection
     if wall.direction == player_direction && 
-      wall.distance < OFFSET_RADIUS &&
+      wall.distance < OFFSET_RADIUS + 3.0 &&
       wall.distance > OFFSET_RADIUS - 10.0
     {
       let mut is_paused = pause_q.single_mut();
