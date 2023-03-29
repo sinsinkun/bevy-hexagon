@@ -31,6 +31,9 @@ impl Plugin for HexagonPlugin {
       .add_system(rotate_camera)
       .add_system(move_walls)
       .add_system(collision_detection)
+      .add_event::<PauseEvent>()
+      .add_system(render_reset)
+      .add_system(handle_reset)
       .add_system(player_control);
   }
 }
@@ -39,6 +42,9 @@ impl Plugin for HexagonPlugin {
 const SPEED:f32 = 4.0;
 const OFFSET_RADIUS:f32 = 60.0;
 const DEG_TO_RAD:f32 = std::f32::consts::PI / 180.0;
+
+// ---- EVENTS ----
+struct PauseEvent;
 
 // ---- RESOURCES ----
 #[derive(Resource)]
@@ -68,6 +74,9 @@ struct Pause(bool);
 #[derive(Component)]
 struct Score(i32, i32);
 
+#[derive(Component)]
+struct UiRoot;
+
 // ---- SYSTEMS ----
 fn setup(
   mut commands: Commands,
@@ -79,20 +88,21 @@ fn setup(
   commands.spawn(Camera2dBundle::default());
 
   // spawn UI
-  commands.spawn(NodeBundle {
+  commands.spawn((NodeBundle {
     style: Style {
       size: Size::new(Val::Percent(100.0), Val::Percent(100.0)),
       flex_direction: FlexDirection::Column,
       padding: UiRect {
         top: Val::Px(5.0),
         left: Val::Px(5.0),
+        right: Val::Px(5.0),
         ..default()
       },
       ..default()
     },
     // background_color: Color::rgba(0.1, 0.1, 0.1, 0.6).into(),
     ..default()
-  }).with_children(|root| {
+  }, UiRoot)).with_children(|root| {
     // spawn FPS
     root.spawn((TextBundle::from_sections([
       TextSection::new(
@@ -426,10 +436,16 @@ fn collision_detection(
   mut timer: ResMut<MsTimer>,
   player_q: Query<&Player>,
   walls_q: Query<&Wall>,
-  mut pause_q: Query<&mut Pause>
+  mut pause_q: Query<&mut Pause>,
+  mut pause_event: EventWriter<PauseEvent>,
 ) {
 
   if !timer.0.tick(time.delta()).just_finished() {
+    return;
+  }
+
+  let is_paused = pause_q.get_single().unwrap();
+  if is_paused.0 {
     return;
   }
 
@@ -458,6 +474,7 @@ fn collision_detection(
     {
       let mut is_paused = pause_q.single_mut();
       is_paused.0 = true;
+      pause_event.send(PauseEvent);
     }
   }
 }
@@ -487,4 +504,82 @@ fn update_score(
   }
   // print score to UI
   text.sections[1].value = "".to_owned() + &score.0.to_string() + "." + &score.1.to_string() + "s";
+}
+
+// render reset btn on pause
+fn render_reset(
+  pause_event: EventReader<PauseEvent>,
+  asset_server: Res<AssetServer>,
+  mut commands: Commands,
+  mut commands_2: Commands,
+  mut commands_3: Commands,
+  node_q: Query<Entity, With<UiRoot>>
+) {
+  if pause_event.len() == 0 {
+    return;
+  }
+  // extract uiroot node
+  let node_entity = node_q.get_single().unwrap();
+
+  // spawn reset btn
+  let mut reset_btn = commands.spawn(NodeBundle {
+    style: Style {
+      size: Size::new(Val::Percent(100.0), Val::Px(100.0)),
+      justify_content: JustifyContent::Center,
+      position: UiRect {
+        top: Val::Px(300.0),
+        ..default()
+      },
+      ..default()
+    },
+    ..default()
+  });
+
+  let mut btn_bg = commands_2.spawn(ButtonBundle {
+    style: Style {
+      size: Size::new(Val::Px(100.0), Val::Px(50.0)),
+      align_items: AlignItems::Center,
+      justify_content: JustifyContent::Center,
+      ..default()
+    },
+    background_color: Color::rgba(0.4, 0.2, 0.4, 0.95).into(),
+    ..default()
+  });
+
+  let mut btn_text = commands_3.spawn(TextBundle::from_section(
+    "Reset",
+    TextStyle {
+      font: asset_server.load("fonts/Roboto-Medium.ttf"),
+      font_size: 30.0,
+      color: Color::WHITE,
+    }
+  ));
+
+  // attach to ui root
+  btn_text.set_parent(btn_bg.id());
+  btn_bg.set_parent(reset_btn.id());
+  reset_btn.set_parent(node_entity);
+}
+
+// perform reset
+fn handle_reset(
+  mut interaction_query: Query<
+    (&Interaction, &mut BackgroundColor),
+    (Changed<Interaction>, With<Button>),
+  >,
+) {
+  for (interaction, mut bg_color) in &mut interaction_query {
+    match *interaction {
+      Interaction::Clicked => {
+        *bg_color = Color::rgba(0.3, 0.15, 0.3, 0.95).into();
+        // TODO:
+      }
+      Interaction::Hovered => {
+        *bg_color = Color::rgba(0.5, 0.25, 0.5, 1.0).into();
+      }
+      Interaction::None => {
+        *bg_color = Color::rgba(0.4, 0.2, 0.4, 0.95).into();
+      }
+    }
+  }
 }
