@@ -32,7 +32,7 @@ impl Plugin for HexagonPlugin {
       .add_system(move_walls)
       .add_system(collision_detection)
       .add_event::<PauseEvent>()
-      .add_system(render_reset)
+      .add_event::<ResetEvent>()
       .add_system(handle_reset)
       .add_system(player_control);
   }
@@ -45,6 +45,7 @@ const DEG_TO_RAD:f32 = std::f32::consts::PI / 180.0;
 
 // ---- EVENTS ----
 struct PauseEvent;
+struct ResetEvent;
 
 // ---- RESOURCES ----
 #[derive(Resource)]
@@ -76,6 +77,11 @@ struct Score(i32, i32);
 
 #[derive(Component)]
 struct UiRoot;
+
+#[derive(Component)]
+struct ResetButton {
+  is_clicked: bool
+}
 
 // ---- SYSTEMS ----
 fn setup(
@@ -148,6 +154,41 @@ fn setup(
           }
         ),
       ]), Score(0, 0)));
+    });
+
+    // reset button
+    root.spawn(NodeBundle {
+      style: Style {
+        size: Size::new(Val::Percent(100.0), Val::Px(100.0)),
+        justify_content: JustifyContent::Center,
+        position: UiRect {
+          top: Val::Px(300.0),
+          ..default()
+        },
+        ..default()
+      },
+      ..default()
+    }).with_children(|reset_btn_container| {
+      reset_btn_container.spawn((ButtonBundle {
+        style: Style {
+          display: Display::None,
+          size: Size::new(Val::Px(100.0), Val::Px(50.0)),
+          align_items: AlignItems::Center,
+          justify_content: JustifyContent::Center,
+          ..default()
+        },
+        background_color: Color::rgba(0.4, 0.2, 0.4, 0.95).into(),
+        ..default()
+      }, ResetButton { is_clicked:false })).with_children(|btn_box| {
+        btn_box.spawn(TextBundle::from_section(
+          "Reset",
+          TextStyle {
+            font: asset_server.load("fonts/Roboto-Medium.ttf"),
+            font_size: 30.0,
+            color: Color::WHITE,
+          }
+        ));
+      });
     });
   });
 
@@ -246,10 +287,17 @@ fn player_control(
   mut timer: ResMut<MsTimer>,
   keyboard_input: Res<Input<KeyCode>>,
   mut query: Query<(&mut Transform, &mut Player), With<Player>>,
-  pause_q: Query<&Pause>
+  pause_q: Query<&Pause>,
+  reset_event: EventReader<ResetEvent>,
 ) {
   let (mut player_transform, mut player) = query.single_mut();
   let mut direction = 0.0;
+
+  if reset_event.len() > 0 {
+    player.angle = 0.0;
+    player_transform.translation = Vec3::new(0.0, OFFSET_RADIUS, 99.0);
+    player_transform.rotation = Quat::from_xyzw(0.0, 0.0, 0.0, 1.0);
+  }
 
   let is_paused = pause_q.get_single().unwrap();
   if is_paused.0 {
@@ -293,10 +341,17 @@ fn rotate_camera(
   time: Res<Time>, 
   mut timer: ResMut<MsTimer>,
   mut query: Query<&mut Transform, With<Camera>>,
-  pause_q: Query<&Pause>
+  pause_q: Query<&Pause>,
+  reset_event: EventReader<ResetEvent>,
 ) {
+  let mut camera_t = query.single_mut();
+
+  if reset_event.len() > 0 {
+    camera_t.rotation = Quat::from_xyzw(0.0, 0.0, 0.0, 1.0);
+    return;
+  }
+
   if timer.0.tick(time.delta()).just_finished() {
-    let mut camera_t = query.single_mut();
     let is_paused = pause_q.get_single().unwrap();
     let mut rad_unit = 0.2 * SPEED * DEG_TO_RAD;
     if is_paused.0 {
@@ -382,8 +437,17 @@ fn move_walls(
   mut timer: ResMut<MsTimer>,
   mut query: Query<(Entity, &mut Transform, &mut Wall, &Mesh2dHandle)>,
   mut meshes: ResMut<Assets<Mesh>>,
-  pause_q: Query<&Pause>
+  pause_q: Query<&Pause>,
+  reset_event: EventReader<ResetEvent>,
 ) {
+
+  if reset_event.len() > 0 {
+    for (wall, _, _, _) in &query {
+      commands.entity(wall).despawn();
+    }
+    return;
+  }
+
   let is_paused = pause_q.get_single().unwrap();
   if is_paused.0 {
     return;
@@ -438,7 +502,15 @@ fn collision_detection(
   walls_q: Query<&Wall>,
   mut pause_q: Query<&mut Pause>,
   mut pause_event: EventWriter<PauseEvent>,
+  mut reset_btn_q: Query<&mut Style, With<ResetButton>>,
+  reset_event: EventReader<ResetEvent>,
 ) {
+
+  let mut reset_btn_style = reset_btn_q.single_mut();
+  if reset_event.len() > 0 {
+    reset_btn_style.display = Display::None;
+    return;
+  }
 
   if !timer.0.tick(time.delta()).just_finished() {
     return;
@@ -474,6 +546,7 @@ fn collision_detection(
     {
       let mut is_paused = pause_q.single_mut();
       is_paused.0 = true;
+      reset_btn_style.display = Display::Flex;
       pause_event.send(PauseEvent);
     }
   }
@@ -483,8 +556,18 @@ fn update_score(
   time: Res<Time>, 
   mut timer: ResMut<MsTimer>,
   mut query:Query<(&mut Text, &mut Score)>,
-  pause_q: Query<&Pause>
+  pause_q: Query<&Pause>,
+  reset_event: EventReader<ResetEvent>
 ) {
+
+  let (mut text, mut score) = query.single_mut();
+  if reset_event.len() > 0 {
+    score.1 = 0;
+    score.0 = 0;
+    text.sections[1].value = "".to_owned() + &score.0.to_string() + "." + &score.1.to_string() + "s";
+    return;
+  }
+
   let is_paused = pause_q.get_single().unwrap();
   if is_paused.0 {
     return;
@@ -494,7 +577,6 @@ fn update_score(
     return;
   }
 
-  let (mut text, mut score) = query.single_mut();
   let new_score_1 = score.1 + 1;
   if new_score_1 == 100 {
     score.1 = 0;
@@ -506,73 +588,29 @@ fn update_score(
   text.sections[1].value = "".to_owned() + &score.0.to_string() + "." + &score.1.to_string() + "s";
 }
 
-// render reset btn on pause
-fn render_reset(
-  pause_event: EventReader<PauseEvent>,
-  asset_server: Res<AssetServer>,
-  mut commands: Commands,
-  mut commands_2: Commands,
-  mut commands_3: Commands,
-  node_q: Query<Entity, With<UiRoot>>
-) {
-  if pause_event.len() == 0 {
-    return;
-  }
-  // extract uiroot node
-  let node_entity = node_q.get_single().unwrap();
-
-  // spawn reset btn
-  let mut reset_btn = commands.spawn(NodeBundle {
-    style: Style {
-      size: Size::new(Val::Percent(100.0), Val::Px(100.0)),
-      justify_content: JustifyContent::Center,
-      position: UiRect {
-        top: Val::Px(300.0),
-        ..default()
-      },
-      ..default()
-    },
-    ..default()
-  });
-
-  let mut btn_bg = commands_2.spawn(ButtonBundle {
-    style: Style {
-      size: Size::new(Val::Px(100.0), Val::Px(50.0)),
-      align_items: AlignItems::Center,
-      justify_content: JustifyContent::Center,
-      ..default()
-    },
-    background_color: Color::rgba(0.4, 0.2, 0.4, 0.95).into(),
-    ..default()
-  });
-
-  let mut btn_text = commands_3.spawn(TextBundle::from_section(
-    "Reset",
-    TextStyle {
-      font: asset_server.load("fonts/Roboto-Medium.ttf"),
-      font_size: 30.0,
-      color: Color::WHITE,
-    }
-  ));
-
-  // attach to ui root
-  btn_text.set_parent(btn_bg.id());
-  btn_bg.set_parent(reset_btn.id());
-  reset_btn.set_parent(node_entity);
-}
-
 // perform reset
 fn handle_reset(
+  // mut commands: Commands,
   mut interaction_query: Query<
-    (&Interaction, &mut BackgroundColor),
-    (Changed<Interaction>, With<Button>),
+    (&Interaction, &mut BackgroundColor, &mut ResetButton),
+    (Changed<Interaction>, With<ResetButton>),
   >,
+  mut reset_event: EventWriter<ResetEvent>,
+  mut pause_q: Query<&mut Pause>,
 ) {
-  for (interaction, mut bg_color) in &mut interaction_query {
+  let mut is_paused = pause_q.single_mut();
+  if !is_paused.0 {
+    return;
+  }
+
+  for (interaction, mut bg_color, mut reset_btn) in &mut interaction_query {
     match *interaction {
       Interaction::Clicked => {
         *bg_color = Color::rgba(0.3, 0.15, 0.3, 0.95).into();
-        // TODO:
+        // reset_btn.is_clicked = true;
+        reset_event.send(ResetEvent);
+        reset_btn.is_clicked = false;
+        is_paused.0 = false;
       }
       Interaction::Hovered => {
         *bg_color = Color::rgba(0.5, 0.25, 0.5, 1.0).into();
